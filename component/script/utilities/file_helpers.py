@@ -1,5 +1,7 @@
 from pathlib import Path
 import os
+import shutil
+from typing import Union
 
 
 def list_files_by_extension_os(folder_path, file_extensions):  # -> list:
@@ -243,3 +245,54 @@ def generate_output_filename_stack(i1: Path, i2: Path, i3: Path) -> Path:
     output_filename = i1.parent / f"{prefix}_{suffix}"
 
     return output_filename
+
+
+def copy_and_rename_file(
+    file_path: Union[str, Path], destination_path: Union[str, Path]
+) -> Path:
+    """
+    Copy a file to a designated location and rename it. If the source is a shapefile (.shp),
+    also copies all corresponding auxiliary files.
+
+    Args:
+        file_path (Union[str, Path]): The path to the source file to be copied.
+        destination_path (Union[str, Path]): The full path including folder and new filename for the copied file.
+
+    Returns:
+        Path: The path to the newly copied file.
+
+    Raises:
+        FileNotFoundError: If the source file does not exist.
+        PermissionError: If there are insufficient permissions to read the source file or write to destination.
+
+    Example:
+        >>> copy_and_rename_file('/path/to/source/file.shp', '/path/to/destination/renamed_file.shp')
+        PosixPath('/path/to/destination/renamed_file.shp')
+    """
+    # Convert to Path objects
+    source_file = Path(file_path)
+    new_file_path = Path(destination_path)
+
+    # Validate that source file exists
+    if not source_file.exists():
+        raise FileNotFoundError(f"Source file '{source_file}' does not exist.")
+
+    # Ensure the destination directory exists
+    new_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy the main file to the destination with a new name
+    shutil.copy2(source_file, new_file_path)
+
+    # If source is a shapefile (.shp), also copy auxiliary files
+    if source_file.suffix.lower() == ".shp":
+        # Use pathlib to construct the glob pattern and iterate over auxiliary files
+        aux_files = list(source_file.parent.glob(f"{source_file.stem}.*"))
+        # print(f"Found {len(aux_files)} auxiliary files: {aux_files}")
+        for aux_file in aux_files:
+            new_aux_filename = f"{new_file_path.stem}{aux_file.suffix}"
+            new_aux_path = new_file_path.parent / new_aux_filename
+            shutil.copy2(aux_file, new_aux_path)
+            print(f"Auxiliary file copied to {new_aux_path}")
+
+    # print(f"File copied to {new_file_path}")
+    return new_file_path

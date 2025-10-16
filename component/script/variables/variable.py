@@ -1,0 +1,128 @@
+from pathlib import Path
+from typing import List, Union, Optional, Any, Dict
+from pydantic import BaseModel, ConfigDict, Field
+
+from component.script.variables.models import DataType
+import ee
+
+
+class Variable(BaseModel):
+    """Base class for all variables (local and GEE-based)."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        use_enum_values=True,
+        # Exclude non-serializable fields by default
+        json_encoders={
+            Path: str,
+        },
+    )
+
+    name: str
+    data_type: DataType
+    year: Optional[int] = None  # Optional year for temporal variables
+    active: bool = True  # Variables are active by default
+    tags: List[str] = Field(default_factory=list)  # Tags for categorizing variables
+    project: Optional["Project"] = Field(
+        default=None, repr=False, exclude=True, validate_default=False
+    )  # Excluded from JSON serialization and __repr__
+    aoi: Union[ee.Feature, ee.Geometry, ee.FeatureCollection] = Field(
+        default=None, repr=False, exclude=True  # Excluded from JSON serialization
+    )
+
+    def model_dump(
+        self,
+        *,
+        mode: str = 'python',
+        include: Any = None,
+        exclude: Any = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Override model_dump to ensure project and aoi are always excluded.
+        This prevents issues with forward references during serialization.
+        """
+        # Ensure project and aoi are in the exclude set
+        if exclude is None:
+            exclude = {'project', 'aoi'}
+        elif isinstance(exclude, set):
+            exclude = exclude | {'project', 'aoi'}
+        elif isinstance(exclude, dict):
+            exclude = {**exclude, 'project': True, 'aoi': True}
+        else:
+            # If exclude is some other type, create a dict
+            exclude = {'project': True, 'aoi': True}
+        
+        return super().model_dump(mode=mode, include=include, exclude=exclude, **kwargs)
+
+    def activate(self, auto_save: bool = True) -> "Variable":
+        """
+        Activate this variable for processing.
+
+        Active variables will be included in batch operations like
+        project.reproject_all() and project.rasterize_all().
+
+        Parameters
+        ----------
+        auto_save : bool, optional
+            If True (default), automatically saves the project after activation.
+
+        Returns
+        -------
+        Variable
+            Returns self for method chaining.
+
+        Examples
+        --------
+        >>> var.activate()
+        >>> var.deactivate().activate()  # Toggle state
+        """
+        self.active = True
+        print(f"✓ Activated '{self.name}'")
+
+        if auto_save and self.project is not None:
+            self.project.save()
+
+        return self
+
+    def deactivate(self, auto_save: bool = True) -> "Variable":
+        """
+        Deactivate this variable to exclude it from processing.
+
+        Inactive variables will be skipped in batch operations like
+        project.reproject_all() and project.rasterize_all().
+
+        Parameters
+        ----------
+        auto_save : bool, optional
+            If True (default), automatically saves the project after deactivation.
+
+        Returns
+        -------
+        Variable
+            Returns self for method chaining.
+
+        Examples
+        --------
+        >>> var.deactivate()
+        >>> var.deactivate(auto_save=False)  # Skip auto-save
+        """
+        self.active = False
+        print(f"✓ Deactivated '{self.name}'")
+
+        if auto_save and self.project is not None:
+            self.project.save()
+
+        return self
+
+
+try:
+    from component.script.project import Project
+
+    # Rebuild Variable classes first
+    Variable.model_rebuild()
+
+    # Then rebuild Project to ensure it sees the updated Variable classes
+    Project.model_rebuild()
+except ImportError:
+    pass  # Project not yet available
