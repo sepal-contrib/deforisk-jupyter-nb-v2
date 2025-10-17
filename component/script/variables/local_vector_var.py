@@ -88,7 +88,7 @@ class LocalVectorVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.variables[self.name] = self
+        self.project.processed_vars[self.name] = self
         print(f"✓ Added '{self.name}' to processed variables")
 
         if auto_save:
@@ -138,11 +138,8 @@ class LocalVectorVar(Variable):
         geobox = base.get_base_geobox()
 
         # Determine output path using project folders
-        output_folder = (
-            self.project.folders.processed_data_folder if self.project else Path.cwd()
-        )
-        output_folder.mkdir(parents=True, exist_ok=True)
-        output_path = output_folder / f"{self.name}_rasterized.tif"
+        output_folder = self.project.folders.data_raw_folder
+        output_path = output_folder / f"{self.name}.tif"
 
         # Map RasterizationMethod to mode parameter
         mode_mapping = {
@@ -166,7 +163,7 @@ class LocalVectorVar(Variable):
         )
 
         return LocalRasterVar.model_construct(
-            name=f"{self.name}_rasterized",
+            name=f"{self.name}",
             raster_type=raster_type,
             path=output_path,
             default_crs=self.default_crs,

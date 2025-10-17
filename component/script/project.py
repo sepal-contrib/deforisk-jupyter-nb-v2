@@ -1,5 +1,6 @@
 import json
 from typing import Dict, List, Optional, Union, Any
+from collections.abc import Iterable
 from pathlib import Path
 from box import Box
 from pydantic import BaseModel, Field, ConfigDict
@@ -42,26 +43,76 @@ class Project(BaseModel):
     )
     base_raster: Optional["LocalRasterVar"] = None
 
+    @staticmethod
+    def _ensure_model_schemas() -> None:
+        """Ensure Pydantic forward references between Project and variable models are resolved."""
+        from component.script.variables import (
+            LocalVectorVar,
+            LocalRasterVar,
+            GEEVar,
+        )
+        from component.script.variables.variable import Variable
+
+        # Rebuild variable models first so they know about Project
+        types_namespace = {"Project": Project}
+
+        Variable.model_rebuild(_types_namespace=types_namespace)
+        LocalVectorVar.model_rebuild(_types_namespace=types_namespace)
+        LocalRasterVar.model_rebuild(_types_namespace=types_namespace)
+        GEEVar.model_rebuild(_types_namespace=types_namespace)
+
+        # Finally rebuild Project to include the updated variable schemas
+        project_namespace = {
+            "LocalVectorVar": LocalVectorVar,
+            "LocalRasterVar": LocalRasterVar,
+            "Variable": Variable,
+        }
+
+        Project.model_rebuild(_types_namespace=project_namespace)
+
     @property
     def folders(self) -> Box:
         """Initialize and return project folder structure."""
         return self.initialize_folders()
 
     @property
-    def variables(self) -> Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]:
-        """
-        Return all variables (both raw and processed) combined.
+    def raw_vars(self) -> Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]:
+        """Alias for raw variables."""
+        return self.raw_variables
 
-        Returns
-        -------
-        Dict[str, Union[LocalVectorVar, LocalRasterVar]]
-            Combined dictionary of raw and processed variables.
-            If a variable exists in both, the processed version takes precedence.
+    @property
+    def processed_vars(self) -> Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]:
+        """Alias for processed variables."""
+        return self.processed_variables
+
+    @property
+    def variables(
+        self,
+    ) -> Dict[str, Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]]:
+        """Return both raw and processed variables as two separate collections.
+
+        The resulting dictionary is structured as::
+
+            {
+                "raw": {
+                    "var1": <LocalVar>,
+                    "var2": <LocalVar>,
+                    ...
+                },
+                "processed": {
+                    "var3": <LocalVar>,
+                    "var4": <LocalVar>,
+                    ...
+                }
+            }
+
+        This provides clear separation between raw and processed datasets.
         """
-        combined = {}
-        combined.update(self.raw_variables)
-        combined.update(self.processed_variables)
-        return combined
+        print("project.variables → {'raw': {...}, 'processed': {...}} view")
+        return {
+            "raw": dict(self.raw_variables),
+            "processed": dict(self.processed_variables),
+        }
 
     def add_variable(self, variable: Union["LocalVectorVar", "LocalRasterVar"]) -> None:
         """
@@ -92,6 +143,9 @@ class Project(BaseModel):
         Path
             Path to the saved JSON file
         """
+        # Ensure schemas are up-to-date before serializing any variables
+        self._ensure_model_schemas()
+
         if filename is None:
             filename = f"{self.project_name}_project.json"
 
@@ -145,6 +199,9 @@ class Project(BaseModel):
         Project
             Loaded project instance with all variables
         """
+        # Ensure schemas are up-to-date before instantiating variables
+        cls._ensure_model_schemas()
+
         from component.script.variables import LocalVectorVar, LocalRasterVar
 
         if filename is None:
@@ -401,53 +458,113 @@ class Project(BaseModel):
             print(f"   ({skipped_count} inactive variables skipped)")
         return rasterized_vars
 
+    def list_variables(
+        self,
+        source: str = "processed",
+        **filters: Any,
+    ) -> Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]:
+        """Return variables from the requested collection applying simple filters.
+
+        Parameters
+        ----------
+        source : str, optional
+            Collection to inspect: 'processed' (default), 'raw', or 'both'.
+        **filters : dict
+            Attribute filters evaluated as equality checks. Iterables (except
+            strings/bytes) are treated as lists of acceptable values. Callables
+            are invoked with the attribute value and must return True to keep it.
+        """
+
+        if source == "processed":
+            candidates = self.processed_vars
+        elif source == "raw":
+            candidates = self.raw_vars
+        elif source == "both":
+            # Combine both, with processed overriding raw for duplicate names
+            candidates = {}
+            candidates.update(self.raw_vars)
+            candidates.update(self.processed_vars)
+        else:
+            raise ValueError("source must be 'processed', 'raw', or 'both'")
+
+        def matches(var: Union["LocalVectorVar", "LocalRasterVar"]) -> bool:
+            for attr, expected in filters.items():
+                if not hasattr(var, attr):
+                    raise AttributeError(
+                        f"Variable '{var.name}' has no attribute '{attr}'"
+                    )
+
+                value = getattr(var, attr)
+
+                if callable(expected):
+                    if not expected(value):
+                        return False
+                elif isinstance(expected, Iterable) and not isinstance(
+                    expected, (str, bytes, bytearray)
+                ):
+                    if value not in expected:
+                        return False
+                else:
+                    if value != expected:
+                        return False
+
+            return True
+
+        if not filters:
+            return dict(candidates)
+
+        return {name: var for name, var in candidates.items() if matches(var)}
+
     def filter_by_tags(
         self,
         tags: Union[str, List[str]],
         match_all: bool = False,
-        source: str = "both",
+        look_up_in: Optional[str] = None,
         **filters,
     ) -> Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]:
         """
-        Filter variables by tags.
+            Filter variables by tags.
 
-        Parameters
-        ----------
-        tags : str or List[str]
-            Tag(s) to filter by. Can be a single tag string or a list of tags.
-        match_all : bool, optional
-            If True, variables must have ALL specified tags (AND logic).
-            If False (default), variables must have AT LEAST ONE tag (OR logic).
-        source : str, optional
-            Which collection to search: 'raw', 'processed', or 'both' (default: 'both').
-        **filters : keyword arguments
-            Additional filter criteria (same as list_variables).
+            Parameters
+            ----------
+            tags : str or List[str]
+                Tag(s) to filter by. Can be a single tag string or a list of tags.
+            match_all : bool, optional
+                If True, variables must have ALL specified tags (AND logic).
+                If False (default), variables must have AT LEAST ONE tag (OR logic).
+            look_up_in : str, optional
+                Collection to search: 'processed' (default), 'raw', or 'both'.
+            **filters : keyword arguments
+                Additional filter criteria (same as list_variables).
 
-        Returns
-        -------
-        Dict[str, Variable]
-            Dictionary of variables that match the tag criteria and any additional filters.
+            Returns
+            -------
+            Dict[str, Variable]
+                Dictionary of variables that match the tag criteria and any additional filters.
 
-        Examples
-        --------
-        >>> # Get all variables with 'climate' tag
+            Examples
+            --------
+            >>> # Get all variables with 'climate' tag
         >>> project.filter_by_tags('climate')
 
         >>> # Get variables with either 'roads' OR 'infrastructure' tag
         >>> project.filter_by_tags(['roads', 'infrastructure'])
 
-        >>> # Get active variables with BOTH 'climate' AND 'temperature' tags
-        >>> project.filter_by_tags(['climate', 'temperature'], match_all=True, active=True)
+            >>> # Get active variables with BOTH 'climate' AND 'temperature' tags
+            >>> project.filter_by_tags(['climate', 'temperature'], match_all=True, active=True)
 
-        >>> # Get processed raster variables with 'elevation' tag
-        >>> project.filter_by_tags('elevation', source='processed', data_type='raster')
+            >>> # Get raw raster variables with 'elevation' tag
+            >>> project.filter_by_tags('elevation', look_up_in='raw', data_type='raster')
         """
         # Normalize tags to a list
         if isinstance(tags, str):
             tags = [tags]
 
+        if look_up_in is None:
+            look_up_in = filters.pop("source", "processed")
+
         # Get all variables matching the basic filters
-        variables = self.list_variables(source=source, **filters)
+        variables = self.list_variables(source=look_up_in, **filters)
 
         # Filter by tags
         result = {}

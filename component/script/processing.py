@@ -5,6 +5,8 @@ import rasterio
 import rioxarray
 import xarray as xr
 
+from component.script.variables.models import RasterType
+
 if TYPE_CHECKING:
     from component.script.project import Project
     from component.script.variables import LocalRasterVar
@@ -381,7 +383,7 @@ def get_forest_loss_calculated(
     from component.script.variables import LocalRasterVar
     from pathlib import Path
 
-    years = project.years
+    years = list(project.years)
 
     # Validate input
     if len(forest_layers) != len(years):
@@ -390,67 +392,70 @@ def get_forest_loss_calculated(
             f"number of years ({len(years)})"
         )
 
-    if len(years) < 3:
-        raise ValueError(f"At least 3 years are required, got {len(years)}")
+    if len(years) != 3:
+        raise ValueError(f"Exactly 3 years are required, got {len(years)}")
 
-    # Sort forest layers by year (assuming they correspond to project.years in order)
-    # Extract paths from LocalRasterVar objects
-    sorted_raster_files = [str(layer.path) for layer in forest_layers]
+    layer_by_year = {}
+    for layer in forest_layers:
+        if layer.year is None:
+            raise ValueError(
+                f"Forest layer '{layer.name}' is missing a 'year' attribute"
+            )
+        if layer.year in layer_by_year:
+            raise ValueError(f"Duplicate forest layer detected for year {layer.year}")
+        layer_by_year[layer.year] = layer
 
-    # Define output filenames with meaningful names
-    forest_loss1_filename = str(
-        project.folders.data_raw_folder / f"forest_loss_{years[0]}_{years[1]}.tif"
-    )
-    forest_loss2_filename = str(
-        project.folders.data_raw_folder / f"forest_loss_{years[0]}_{years[2]}.tif"
-    )
-    forest_loss3_filename = str(
-        project.folders.data_raw_folder / f"forest_loss_{years[1]}_{years[2]}.tif"
-    )
+    if sorted(layer_by_year) != sorted(years):
+        raise ValueError(
+            f"Forest layer years {sorted(layer_by_year)} do not match project years {years}"
+        )
 
-    print(f"Calculating forest loss between {years[0]} and {years[1]}...")
-    process_forest_loss_xarray(
-        sorted_raster_files[0], sorted_raster_files[1], forest_loss1_filename
-    )
+    ordered_layers = []
+    for year in years:
+        try:
+            ordered_layers.append(layer_by_year[year])
+        except KeyError as exc:
+            raise ValueError(
+                f"No forest layer provided for project year {year}"
+            ) from exc
 
-    print(f"Calculating forest loss between {years[0]} and {years[2]}...")
-    process_forest_loss_xarray(
-        sorted_raster_files[0], sorted_raster_files[2], forest_loss2_filename
-    )
+    pairings = [
+        (ordered_layers[0], ordered_layers[1]),
+        (ordered_layers[0], ordered_layers[2]),
+        (ordered_layers[1], ordered_layers[2]),
+    ]
 
-    print(f"Calculating forest loss between {years[1]} and {years[2]}...")
-    process_forest_loss_xarray(
-        sorted_raster_files[1], sorted_raster_files[2], forest_loss3_filename
-    )
+    forest_loss_vars: List[LocalRasterVar] = []
+
+    for start_layer, end_layer in pairings:
+        start_year = start_layer.year
+        end_year = end_layer.year
+        output_path = (
+            project.folders.data_raw_folder / f"forest_loss_{start_year}_{end_year}.tif"
+        )
+
+        print(f"Calculating forest loss between {start_year} and {end_year}...")
+        process_forest_loss_xarray(
+            str(start_layer.path),
+            str(end_layer.path),
+            str(output_path),
+        )
+
+        forest_loss_vars.append(
+            LocalRasterVar(
+                name=f"forest_loss_{start_year}_{end_year}",
+                path=Path(output_path),
+                raster_type=RasterType.categorical,
+                project=project,
+                tags=["forest_loss"],
+                year=end_year,
+                default_crs=end_layer.default_crs or start_layer.default_crs,
+                default_resolution=end_layer.default_resolution
+                or start_layer.default_resolution,
+            )
+        )
 
     print("✓ Forest loss calculation complete!")
-
-    # Create LocalRasterVar objects for the output files
-    from component.script.variables import RasterType
-
-    forest_loss_vars = [
-        LocalRasterVar(
-            name=f"forest_loss_{years[0]}_{years[1]}",
-            path=Path(forest_loss1_filename),
-            raster_type=RasterType.categorical,
-            project=project,
-            tags=["forest_loss"],
-        ),
-        LocalRasterVar(
-            name=f"forest_loss_{years[0]}_{years[2]}",
-            path=Path(forest_loss2_filename),
-            raster_type=RasterType.categorical,
-            project=project,
-            tags=["forest_loss"],
-        ),
-        LocalRasterVar(
-            name=f"forest_loss_{years[1]}_{years[2]}",
-            path=Path(forest_loss3_filename),
-            raster_type=RasterType.categorical,
-            project=project,
-            tags=["forest_loss"],
-        ),
-    ]
 
     return forest_loss_vars
 

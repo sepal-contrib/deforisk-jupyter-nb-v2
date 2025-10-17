@@ -138,7 +138,7 @@ class LocalRasterVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.variables[self.name] = self
+        self.project.processed_vars[self.name] = self
         print(f"✓ Added '{self.name}' to processed variables")
 
         if auto_save:

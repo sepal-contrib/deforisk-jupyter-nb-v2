@@ -33,10 +33,10 @@ class Variable(BaseModel):
     def model_dump(
         self,
         *,
-        mode: str = 'python',
+        mode: str = "python",
         include: Any = None,
         exclude: Any = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Override model_dump to ensure project and aoi are always excluded.
@@ -44,15 +44,15 @@ class Variable(BaseModel):
         """
         # Ensure project and aoi are in the exclude set
         if exclude is None:
-            exclude = {'project', 'aoi'}
+            exclude = {"project", "aoi"}
         elif isinstance(exclude, set):
-            exclude = exclude | {'project', 'aoi'}
+            exclude = exclude | {"project", "aoi"}
         elif isinstance(exclude, dict):
-            exclude = {**exclude, 'project': True, 'aoi': True}
+            exclude = {**exclude, "project": True, "aoi": True}
         else:
             # If exclude is some other type, create a dict
-            exclude = {'project': True, 'aoi': True}
-        
+            exclude = {"project": True, "aoi": True}
+
         return super().model_dump(mode=mode, include=include, exclude=exclude, **kwargs)
 
     def activate(self, auto_save: bool = True) -> "Variable":

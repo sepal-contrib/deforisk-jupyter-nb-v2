@@ -3,6 +3,7 @@ from typing import List, Optional
 import ee
 from pydantic import Field
 import rioxarray
+import odc.geo.xr  # do not delete this
 
 from component.script.processing import (
     display_raster,
@@ -107,7 +108,7 @@ class LocalRasterVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.variables[self.name] = self
+        self.project.processed_vars[self.name] = self
         print(f"✓ Added '{self.name}' to processed variables")
 
         if auto_save:
@@ -175,10 +176,7 @@ class LocalRasterVar(Variable):
             target_epsg = f"EPSG:{target_epsg}"
 
         # Determine output path using project folders
-        output_folder = (
-            self.project.folders.processed_data_folder if self.project else Path.cwd()
-        )
-        output_folder.mkdir(parents=True, exist_ok=True)
+        output_folder = self.project.folders.processed_data_folder
         output_path = output_folder / f"{self.name}_reprojected.tif"
 
         # Determine resolution
