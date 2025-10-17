@@ -274,27 +274,76 @@ def filter_folders_by_exclude_keywords(
     return [f for f in folders if matches_criteria(f)]
 
 
-# Example usage:
-if __name__ == "__main__":
-    # Example of how to use the filtering functions with FolderManager
-    from component.script.file_management import FolderManager
+import re
+from pathlib import Path
+from typing import List, Optional
 
-    # Create a FolderManager instance
-    folder_manager = FolderManager("test_folder")
 
-    # Get files from the folder
-    files = folder_manager.list_files()
+def filter_files_by_keywords_strict(
+    files: List[Path],
+    include_keywords: Optional[List[str]] = None,
+    match_any_include: bool = True,
+    exclude_keywords: Optional[List[str]] = None,
+    match_any_exclude: bool = True,
+) -> List[Path]:
+    """
+    Filter files by including and excluding keywords in their names,
+    using token-based matching for higher precision.
 
-    # Filter files by extension
-    txt_files = filter_files_by_extension(files, [".txt"])
-    py_files = filter_files_by_extension(files, [".py", ".js"])
+    Args:
+        files: List of file paths to filter.
+        include_keywords: List of keywords that must be present in the filename (optional).
+        match_any_include: If True, matches any include keyword; if False, matches all include keywords.
+        exclude_keywords: List of keywords that must NOT be present in the filename (optional).
+        match_any_exclude: If True, excludes file if any exclude keyword is present;
+                           if False, excludes file only if all exclude keywords are present.
 
-    # Filter files by include keywords
-    important_files = filter_files_by_include_keywords(files, ["important"])
-    exclude_temp_files = filter_files_by_exclude_keywords(files, ["temp"])
+    Returns:
+        List of Path objects that match the criteria.
+    """
 
-    # Combined filtering example - files that are .txt or .py AND contain "important"
-    txt_or_py_files = filter_files_by_extension(files, [".txt", ".py"])
-    important_txt_py_files = filter_files_by_include_keywords(
-        txt_or_py_files, ["important"], match_any=True
+    # Normalize keywords to lowercase for case-insensitive matching
+    normalized_include_keywords = (
+        [kw.lower() for kw in include_keywords] if include_keywords else []
     )
+    normalized_exclude_keywords = (
+        [kw.lower() for kw in exclude_keywords] if exclude_keywords else []
+    )
+
+    def _is_token_separate_in_name(token: str, name: str) -> bool:
+        """Return True if `token` appears in `name` as a separate word (not part of another token)."""
+        if token.isdigit():  # direct substring match for numeric tokens
+            return token in name
+        pattern = rf"(?<![0-9A-Za-z]){re.escape(token)}(?![0-9A-Za-z])"
+        return re.search(pattern, name) is not None
+
+    def _match_tokens(name: str, tokens: List[str], match_any: bool) -> bool:
+        """Helper: check if file name matches any/all tokens."""
+        if not tokens:
+            return True
+        checks = [_is_token_separate_in_name(tok, name) for tok in tokens]
+        return any(checks) if match_any else all(checks)
+
+    def matches_criteria(file_path: Path) -> bool:
+        filename = file_path.name.lower()
+
+        # Include criteria
+        include_match = _match_tokens(
+            filename, normalized_include_keywords, match_any_include
+        )
+
+        # Exclude criteria
+        if not normalized_exclude_keywords:
+            exclude_match = True
+        else:
+            exclude_hits = [
+                _is_token_separate_in_name(tok, filename)
+                for tok in normalized_exclude_keywords
+            ]
+            exclude_match = not (
+                any(exclude_hits) if match_any_exclude else all(exclude_hits)
+            )
+
+        return include_match and exclude_match
+
+    return [f for f in files if matches_criteria(f)]

@@ -127,67 +127,57 @@ def filter_files(input_files, filter_words, exclude_words=None):
     return filtered_files
 
 
-def generate_output_filename_loss(i1: Path, i2: Path) -> Path:
+from pathlib import Path
+
+
+def generate_output_filename_change(i1: Path, i2: Path, change_keyword: str) -> Path:
     """
-    Generate an output filename based on two input file paths.
+    Generate an output filename representing a change between two input rasters,
+    inserting a user-defined keyword such as 'deforestation', 'gain', etc.
 
     Args:
-        i1: First input file path
-        i2: Second input file path
+        i1 (Path): First input file path
+        i2 (Path): Second input file path
+        change_keyword (str): Keyword to insert (e.g. 'deforestation', 'gain', 'change')
 
     Returns:
-        Path object for the generated output filename
+        Path: Output file path (e.g. '/data/YARI_deforestation_gfc_10_20152020.tif')
     """
-    # Extract the base names from the input file paths
-    base_name_i1 = i1.stem  # Gets filename without extension
-    base_name_i2 = i2.stem  # Gets filename without extension
+    base_name_i1 = i1.stem
+    base_name_i2 = i2.stem
 
-    # Find the common prefix up to the year
-    def extract_common_prefix(base_name):
-        common_prefix = ""
-        for word in base_name.split("_"):
-            if (
-                word.isdigit() and len(word) == 4
-            ):  # Check if the word is a four-digit year
-                break
-            common_prefix += word + "_"
-        return common_prefix.strip("_")
-
-    common_prefix = extract_common_prefix(base_name_i1)
-
-    # Extract the years from the base names and ensure they are four digits
-    def extract_year(base_name):
-        year = next(
-            (
-                word
-                for word in base_name.split("_")
-                if word.isdigit() and len(word) == 4
-            ),
-            None,
-        )
-        if not year:
-            raise ValueError(
-                f"Year could not be extracted or is not four digits: {base_name}"
-            )
-        return year
+    # --- Extract years ---
+    def extract_year(name: str) -> str:
+        for part in name.split("_"):
+            if part.isdigit() and len(part) == 4:
+                return part
+        raise ValueError(f"Year not found in: {name}")
 
     year_i1 = extract_year(base_name_i1)
     year_i2 = extract_year(base_name_i2)
+    year_start, year_end = sorted([year_i1, year_i2])
 
-    # Construct the output file name based on the input file names
-    prefix = f"{common_prefix}_loss"
-    suffix = f"{year_i1}_{year_i2}.tif"
+    # --- Remove years from the parts ---
+    parts = [p for p in base_name_i1.split("_") if not (p.isdigit() and len(p) == 4)]
 
-    # Combine the directory path with the new file name
-    output_filename = i1.parent / f"{prefix}_{suffix}"
+    # --- Replace the 2nd token with the keyword ---
+    if len(parts) >= 2:
+        parts[1] = change_keyword
+    else:
+        # If there's only one token, just insert the keyword after it
+        parts.append(change_keyword)
 
-    return output_filename
+    # --- Build the new filename ---
+    new_base = "_".join(parts) + f"_{year_start}{year_end}.tif"
+    return i1.parent / new_base
 
 
 from pathlib import Path
 
 
-def generate_output_filename_stack(i1: Path, i2: Path, i3: Path) -> Path:
+def generate_output_filename_stack(
+    i1: Path, i2: Path, i3: Path, change_keyword: str
+) -> Path:
     """
     Generate an output filename based on three input file paths.
 
@@ -195,6 +185,8 @@ def generate_output_filename_stack(i1: Path, i2: Path, i3: Path) -> Path:
         i1: First input file path
         i2: Second input file path
         i3: Third input file path
+        change_keyword (str): Keyword to insert (e.g. 'deforestation', 'gain', 'change')
+
 
     Returns:
         Path object for the generated output filename
@@ -204,47 +196,31 @@ def generate_output_filename_stack(i1: Path, i2: Path, i3: Path) -> Path:
     base_name_i2 = i2.stem  # Gets filename without extension
     base_name_i3 = i3.stem  # Gets filename without extension
 
-    # Find the common prefix up to the year
-    def extract_common_prefix(base_name):
-        common_prefix = ""
-        for word in base_name.split("_"):
-            if (
-                word.isdigit() and len(word) == 4
-            ):  # Check if the word is a four-digit year
-                break
-            common_prefix += word + "_"
-        return common_prefix.strip("_")
-
-    common_prefix = extract_common_prefix(base_name_i1)
-
-    # Extract the years from the base names and ensure they are four digits
-    def extract_year(base_name):
-        year = next(
-            (
-                word
-                for word in base_name.split("_")
-                if word.isdigit() and len(word) == 4
-            ),
-            None,
-        )
-        if not year:
-            raise ValueError(
-                f"Year could not be extracted or is not four digits: {base_name}"
-            )
-        return year
+    # Extract years (4-digit numbers)
+    def extract_year(name):
+        for part in name.split("_"):
+            if part.isdigit() and len(part) == 4:
+                return part
+        raise ValueError(f"Year not found in: {name}")
 
     year_i1 = extract_year(base_name_i1)
     year_i2 = extract_year(base_name_i2)
     year_i3 = extract_year(base_name_i3)
 
-    # Construct the output file name based on the input file names
-    prefix = f"{common_prefix}_loss"
-    suffix = f"{year_i1}_{year_i2}_{year_i3}.tif"
+    # Remove years from parts
+    parts = [p for p in base_name_i1.split("_") if not (p.isdigit() and len(p) == 4)]
 
-    # Combine the directory path with the new file name
-    output_filename = i1.parent / f"{prefix}_{suffix}"
+    # --- Replace the 2nd token with the keyword ---
+    if len(parts) >= 2:
+        parts[1] = change_keyword
+    else:
+        # If there's only one token, just insert the keyword after it
+        parts.append(change_keyword)
 
-    return output_filename
+    # Build new base name
+    new_base = "_".join(parts) + f"_{year_i1}_{year_i2}_{year_i3}.tif"
+
+    return i1.parent / new_base
 
 
 def copy_and_rename_file(

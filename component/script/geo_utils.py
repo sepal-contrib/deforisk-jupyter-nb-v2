@@ -210,3 +210,74 @@ def reproject_shapefile(
     if output_path:
         gdf.to_file(output_path)
     return None
+
+
+def xr_reproject(
+    raster_path: str = None,
+    geobox=None,
+    resampling_method="nearest",
+    output_path: str = None,
+    **rasterio_kwargs,
+):
+    """
+    Rasterizes a vector shapefile into a raster array.
+
+    This function provides unified functionality for both binary and unique ID rasterization.
+
+    Parameters
+    ----------
+    raster_path : str
+        Path to the input shapefile containing vector data.
+    geobox : odc.geo.geobox.GeoBox
+        The spatial template defining the shape, coordinates, dimensions, and transform
+        of the output raster.
+    crs : str or CRS object, optional
+        If ``geobox``'s coordinate reference system (CRS) cannot be
+        determined, provide a CRS using this parameter.
+        (e.g. 'EPSG:3577').
+    output_path : string, optional
+        Provide an optional string file path to export the rasterized
+        data as a GeoTIFF file.
+    **rasterio_kwargs :
+        A set of keyword arguments to ``rasterio.features.rasterize``.
+        Can include: 'all_touched', 'merge_alg', 'dtype'.
+
+    Returns
+    -------
+    da_rasterized : xarray.DataArray
+        The rasterized vector data.
+    """
+
+    import geopandas as gpd
+    import rasterio
+    import xarray
+    from odc.geo import xr
+
+    # Read the raster
+    raster_array = rioxarray.open_rasterio(
+        raster_path,
+        chunks="auto",
+        cache=False,
+        lock=False,
+    )
+
+    # Convert numpy array to a full xarray.DataArray
+    # and set array name if supplied
+    da_reprojected = xr.xr_reproject(
+        src=raster_array,
+        how=geobox,
+        resampling=resampling_method,
+    )
+
+    da_reprojected.rio.to_raster(
+        output_path,
+        driver="GTiff",
+        compress="DEFLATE",
+        predictor=2,
+        bigtiff="YES",
+        tiled=True,
+    )
+
+    # Explicitly close references – not strictly required but tidy.
+    del raster_array
+    del da_reprojected
