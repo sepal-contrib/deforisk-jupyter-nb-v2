@@ -1,17 +1,18 @@
 import os
 import uuid
-import psutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import numpy as np
 import pandas as pd
+import psutil
 from osgeo import gdal
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ================================================================
 # Helpers
 # ================================================================
 def estimate_raster_size(path):
-    """Return (ny, nx, nband, est_bytes, est_gb) for a raster."""
+    """Estimates raster size and returns dimensions in pixels and memory usage in bytes and gigabytes."""
     r = gdal.Open(path)
     ny, nx = r.RasterYSize, r.RasterXSize
     nband = r.RasterCount
@@ -27,8 +28,8 @@ def estimate_raster_size(path):
 
 def optimal_block_shape(ny, nx, nband, ram_gb, ram_fraction=0.7):
     """
-    Estimate optimal block height for sequential reading given available RAM.
-    Returns (blk_rows, blk_cols).
+    Calculates optimal block height for sequential reading given available RAM.
+        Returns (blk_rows, blk_cols) tuple.
     """
     target_gb = ram_gb * ram_fraction
     bytes_per_row = nx * nband * 4  # float32

@@ -1,7 +1,7 @@
 from typing import Any, Optional, Union
 
 import ee
-import geedim as gd
+import geedim as gd  # noqa
 
 
 # ------------------------------------------------------------------
@@ -77,7 +77,7 @@ def download_ee_image(
         The function writes the GeoTIFF in place; it returns ``None``.
     """
     try:
-        import geedim as gd
+        import geedim as gd  # noqa
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "Please install geedim using 'pip install geedim' or "

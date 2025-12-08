@@ -34,11 +34,11 @@ from dask.distributed import Client, Future, Lock, get_client
 # Public helper – the Dask entry point
 # ------------------------------------------------------------------
 def reproject_raster_rio_with_dask(
-    input_file: str,
-    output_file: str,
-    target_epsg: int | str,
-    resolution: float = 30.0,
+    input_file: str = None,
+    target_epsg: int | str = None,
     resampling_method: str = "nearest",
+    output_file: str = None,
+    resolution: float = 30.0,
     overwrite: bool = False,
     **kwargs: Any,  # forwarded to the worker (unused but kept for API parity)
 ) -> Future:
