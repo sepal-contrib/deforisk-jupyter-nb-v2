@@ -1,0 +1,125 @@
+/* Custom CSS for Deforisk Documentation with PyData Theme */
+
+/* Improve code block styling */
+.highlight {
+    background: #f8f8f8;
+    border-left: 3px solid #4051b5;
+    padding: 10px;
+    margin: 1em 0;
+    border-radius: 4px;
+}
+
+/* Make admonitions more prominent */
+.admonition {
+    padding: 15px;
+    margin: 20px 0;
+    border-left: 4px solid;
+    border-radius: 4px;
+}
+
+.admonition.note {
+    border-color: #4051b5;
+    background-color: #E8EAF6;
+}
+
+.admonition.warning {
+    border-color: #ff9800;
+    background-color: #FFF3E0;
+}
+
+.admonition.tip {
+    border-color: #4caf50;
+    background-color: #E8F5E9;
+}
+
+.admonition.important {
+    border-color: #f44336;
+    background-color: #FFEBEE;
+}
+
+/* Improve table styling */
+table.docutils {
+    border: none;
+    border-collapse: collapse;
+    margin: 1em 0;
+}
+
+table.docutils th {
+    background-color: #4051b5;
+    color: white;
+    padding: 10px;
+    text-align: left;
+}
+
+table.docutils td {
+    padding: 8px;
+    border-bottom: 1px solid #ddd;
+}
+
+table.docutils tr:hover {
+    background-color: #f5f5f5;
+}
+
+/* Code formatting improvements */
+code {
+    background-color: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    font-size: 0.9em;
+}
+
+/* Inline code in headings */
+h1 code, h2 code, h3 code, h4 code {
+    font-size: inherit;
+    background-color: transparent;
+    padding: 0;
+}
+
+/* Better spacing for lists */
+ul li, ol li {
+    margin: 0.5em 0;
+}
+
+/* Nested lists */
+ul ul, ol ul, ul ol, ol ol {
+    margin-top: 0.25em;
+    margin-bottom: 0.25em;
+}
+
+/* Improve blockquote styling */
+blockquote {
+    border-left: 4px solid #4051b5;
+    padding-left: 1em;
+    margin-left: 0;
+    color: #555;
+    font-style: italic;
+}
+
+/* Emoji support */
+.emoji {
+    font-size: 1.2em;
+}
+
+/* Improve notebook cell styling */
+.nbinput .prompt,
+.nboutput .prompt {
+    min-width: 11ex;
+}
+
+/* Make the content area wider for better readability */
+.bd-main .bd-content {
+    max-width: 100%;
+}
+
+/* Improve search box styling */
+.bd-search {
+    max-width: 300px;
+}
+
+/* Footer improvements */
+footer.bd-footer-content {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid #dee2e6;
+}
