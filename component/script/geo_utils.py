@@ -5,7 +5,9 @@ import geopandas as gpd
 import rioxarray
 import fiona
 from shapely.geometry import shape
-
+import geopandas as gpd
+import rasterio
+from odc.geo import xr
 import numpy as np
 import rasterio
 
@@ -247,11 +249,6 @@ def xr_reproject(
     da_rasterized : xarray.DataArray
         The rasterized vector data.
     """
-
-    import geopandas as gpd
-    import rasterio
-    import xarray
-    from odc.geo import xr
 
     # Read the raster
     raster_array = rioxarray.open_rasterio(
