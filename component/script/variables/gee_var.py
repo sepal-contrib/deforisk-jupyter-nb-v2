@@ -285,3 +285,13 @@ class GEEVar(Variable):
 
             # Return single instance if only one, otherwise return list
             return local_vars[0] if len(local_vars) == 1 else local_vars
+
+
+# Rebuild GEEVar after Variable and Project are available
+try:
+    from component.script.project import Project
+
+    types_namespace = {"Project": Project}
+    GEEVar.model_rebuild(_types_namespace=types_namespace)
+except ImportError:
+    pass  # Project not yet available
