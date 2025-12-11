@@ -5,6 +5,7 @@ from pathlib import Path
 from box import Box
 from pydantic import BaseModel, Field, ConfigDict
 from component.script.variables import LocalVectorVar, LocalRasterVar
+from component.script.variables.models import DataType
 
 root_folder: Path = Path.cwd().parent
 downloads_folder = root_folder / "data"
@@ -34,7 +35,10 @@ class Project(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     project_name: str
-    years: List[int] = Field(..., min_length=1)
+    years: Optional[List[int]] = Field(
+        default=None,
+        description="Deprecated: Years are now auto-discovered from variables",
+    )
     raw_variables: Dict[str, Union["LocalVectorVar", "LocalRasterVar"]] = Field(
         default_factory=dict
     )
@@ -129,6 +133,160 @@ class Project(BaseModel):
         print(f"Adding variable: {variable.name}")
         self.processed_variables[variable.name] = variable
 
+    def get_variable(
+        self, name: str, year: Optional[int] = None, source: str = "processed"
+    ) -> Optional[Union["LocalVectorVar", "LocalRasterVar"]]:
+        """
+        Get a variable by name and optional year.
+
+        Parameters
+        ----------
+        name : str
+            Variable name (e.g., 'towns', 'forest_gfc')
+        year : int, optional
+            Year for temporal variables. If None, returns static variable.
+        source : str, optional
+            Variable source: 'processed' (default) or 'raw'
+
+        Returns
+        -------
+        LocalVectorVar | LocalRasterVar | None
+            The variable if found, None otherwise
+        """
+        variables = (
+            self.processed_variables if source == "processed" else self.raw_variables
+        )
+
+        # Construct storage key
+        storage_key = f"{name}_{year}" if year else name
+
+        # Try storage key lookup (fast path)
+        if storage_key in variables:
+            return variables[storage_key]
+
+        return None
+
+    def get_all_instances(
+        self, name: str, source: str = "processed"
+    ) -> List[Union["LocalVectorVar", "LocalRasterVar"]]:
+        """
+        Get all year instances of a variable by name.
+
+        Parameters
+        ----------
+        name : str
+            Variable name (e.g., 'towns', 'forest_gfc')
+        source : str, optional
+            Variable source: 'processed' (default) or 'raw'
+
+        Returns
+        -------
+        List[LocalVectorVar | LocalRasterVar]
+            List of all variable instances with matching name
+        """
+        variables = (
+            self.processed_variables if source == "processed" else self.raw_variables
+        )
+        return [var for var in variables.values() if var.name == name]
+
+    def is_temporal(self, name: str, source: str = "processed") -> bool:
+        """
+        Check if a variable has multiple year instances (is temporal).
+
+        Parameters
+        ----------
+        name : str
+            Variable name
+        source : str, optional
+            Variable source: 'processed' (default) or 'raw'
+
+        Returns
+        -------
+        bool
+            True if variable has multiple years, False otherwise
+        """
+        instances = self.get_all_instances(name, source)
+        unique_years = set(var.year for var in instances if var.year is not None)
+        return len(unique_years) > 1
+
+    def get_variable_years(self, name: str, source: str = "processed") -> List[int]:
+        """
+        Get list of available years for a variable.
+
+        Parameters
+        ----------
+        name : str
+            Variable name
+        source : str, optional
+            Variable source: 'processed' (default) or 'raw'
+
+        Returns
+        -------
+        List[int]
+            Sorted list of years for the variable
+        """
+        instances = self.get_all_instances(name, source)
+        years = sorted(set(var.year for var in instances if var.year is not None))
+        return years
+
+    def get_available_years(self, source: str = "all") -> List[int]:
+        """
+        Get all unique years across all variables in the project.
+
+        This automatically discovers years from the variables that have been added,
+        rather than relying on a manually specified years list.
+
+        Parameters
+        ----------
+        source : str, optional
+            Variable source: 'processed' (default), 'raw', or 'all'
+
+        Returns
+        -------
+        List[int]
+            Sorted list of all unique years found in variables
+
+        Examples
+        --------
+        >>> project.get_available_years()  # All years from all variables
+        [2015, 2020, 2024]
+        >>> project.get_available_years(source='raw')  # Only from raw variables
+        [2015, 2020, 2024]
+        """
+        years_set = set()
+
+        if source in ("processed", "all"):
+            for var in self.processed_variables.values():
+                if var.year is not None:
+                    years_set.add(var.year)
+
+        if source in ("raw", "all"):
+            for var in self.raw_variables.values():
+                if var.year is not None:
+                    years_set.add(var.year)
+
+        return sorted(years_set)
+
+    def list_unique_variable_names(self, source: str = "processed") -> List[str]:
+        """
+        Get list of unique variable names.
+
+        Parameters
+        ----------
+        source : str, optional
+            Variable source: 'processed' (default) or 'raw'
+
+        Returns
+        -------
+        List[str]
+            Sorted list of unique variable names (e.g., ['altitude', 'towns', 'forest_gfc'])
+        """
+        variables = (
+            self.processed_variables if source == "processed" else self.raw_variables
+        )
+        unique_names = sorted(set(var.name for var in variables.values()))
+        return unique_names
+
     def save(self, filename: Optional[str] = None) -> Path:
         """
         Save the project to a JSON file in the project folder.
@@ -157,10 +315,13 @@ class Project(BaseModel):
         # Prepare data for serialization
         data = {
             "project_name": self.project_name,
-            "years": self.years,
             "raw_variables": {},
             "processed_variables": {},
         }
+
+        # Only include years if explicitly set (for backward compatibility)
+        if self.years is not None:
+            data["years"] = self.years
 
         # Serialize raw variables
         for var_name, var in self.raw_variables.items():
@@ -181,6 +342,8 @@ class Project(BaseModel):
         )
 
         print(f"Project saved to: {save_path}")
+
+        return save_path
 
     @classmethod
     def load(cls, project_name: str, filename: Optional[str] = None) -> "Project":
@@ -217,7 +380,7 @@ class Project(BaseModel):
         data = json.loads(load_path.read_text(encoding="utf-8"))
 
         # Create project instance without variables first
-        project = cls(project_name=data["project_name"], years=data["years"])
+        project = cls(project_name=data["project_name"], years=data.get("years"))
 
         # Reconstruct raw variables
         for var_name, var_data in data.get("raw_variables", {}).items():
@@ -276,7 +439,7 @@ class Project(BaseModel):
         print(f"Loaded {len(project.processed_variables)} processed variables")
         return project
 
-    def reproject_all(
+    def reproject_and_match_all(
         self,
         target_epsg: Optional[str] = None,
         resolution: Optional[float] = None,
@@ -339,35 +502,29 @@ class Project(BaseModel):
                     "base_raster must be set when target_epsg or resolution is not provided. "
                     "Use variable.use_as_base_raster() to set a base raster first."
                 )
-            _target_epsg = target_epsg or self.base_raster.default_crs
-            _resolution = resolution or self.base_raster.default_resolution
-        else:
-            _target_epsg = target_epsg
-            _resolution = resolution
 
         # Reproject all active raster variables
         reprojected_vars = {}
         skipped_count = 0
 
-        for var_name, var in source_vars.items():
-            # Skip inactive variables
-            if not var.active:
-                print(f"⏭️  Skipping '{var_name}' (inactive)")
-                skipped_count += 1
-                continue
-
-            if isinstance(var, LocalRasterVar):
-                print(f"\n📍 Reprojecting '{var_name}'...")
-                reprojected = var.reproject(
-                    target_epsg=_target_epsg, resolution=_resolution, **reproject_kwargs
+        for var_key, var in source_vars.items():
+            # Check data_type instead of isinstance to handle module reloads
+            if var.data_type == DataType.raster:
+                print(f"\n📍 Reprojecting '{var_key}'...")
+                reprojected = var.reproject_and_match(
+                    geobox=self.base_raster.get_base_geobox(),
                 )
 
                 if add_to_processed:
                     reprojected.add_as_processed(auto_save=auto_save)
 
-                reprojected_vars[reprojected.name] = reprojected
-            else:
-                print(f"⚠️  Skipping '{var_name}' (not a raster variable)")
+                # Use storage key pattern (name_year or just name)
+                storage_key = (
+                    f"{reprojected.name}_{reprojected.year}"
+                    if reprojected.year
+                    else reprojected.name
+                )
+                reprojected_vars[storage_key] = reprojected
 
         print(f"\n✅ Reprojected {len(reprojected_vars)} raster variables")
         if skipped_count > 0:
@@ -435,23 +592,28 @@ class Project(BaseModel):
         rasterized_vars = {}
         skipped_count = 0
 
-        for var_name, var in source_vars.items():
+        for var_key, var in source_vars.items():
             # Skip inactive variables
             if not var.active:
-                print(f"⏭️  Skipping '{var_name}' (inactive)")
+                print(f"⏭️  Skipping '{var_key}' (inactive)")
                 skipped_count += 1
                 continue
 
-            if isinstance(var, LocalVectorVar):
-                print(f"\n🗺️  Rasterizing '{var_name}'...")
+            # Check data_type instead of isinstance to handle module reloads
+            if var.data_type == DataType.vector:
+                print(f"\n🗺️  Rasterizing '{var_key}'...")
                 rasterized = var.rasterize(base=self.base_raster, **rasterize_kwargs)
 
                 if add_to_processed:
                     rasterized.add_as_processed(auto_save=auto_save)
 
-                rasterized_vars[rasterized.name] = rasterized
-            else:
-                print(f"⚠️  Skipping '{var_name}' (not a vector variable)")
+                # Use storage key pattern (name_year or just name)
+                storage_key = (
+                    f"{rasterized.name}_{rasterized.year}"
+                    if rasterized.year
+                    else rasterized.name
+                )
+                rasterized_vars[storage_key] = rasterized
 
         print(f"\n✅ Rasterized {len(rasterized_vars)} vector variables")
         if skipped_count > 0:
@@ -580,6 +742,213 @@ class Project(BaseModel):
 
         return result
 
+    def filter_by_attrs(
+        self,
+        source: str = "processed",
+        **attrs,
+    ) -> Dict[str, Union["LocalVectorVar", "LocalRasterVar"]]:
+        """
+        Filter variables by any attribute(s).
+
+        This is an alias for list_variables() with a more explicit name for filtering.
+        You can filter by any variable attribute such as year, name, active status,
+        data_type, tags, or any custom attributes.
+
+        Parameters
+        ----------
+        source : str, optional
+            Collection to search: 'processed' (default), 'raw', or 'both'.
+        **attrs : keyword arguments
+            Attribute filters evaluated as equality checks. You can use:
+            - Simple values: year=2020, active=True, data_type='raster'
+            - Lists of acceptable values: year=[2019, 2020, 2021]
+            - Callable functions: year=lambda y: y >= 2015
+            - Tags (special): tags=["tag1"] or tags="tag1" checks if ANY tag matches (OR logic)
+
+        Returns
+        -------
+        Dict[str, Variable]
+            Dictionary of variables that match all specified attribute criteria.
+
+        Examples
+        --------
+        >>> # Filter by year
+        >>> project.filter_by_attrs(year=2020)
+
+        >>> # Filter by multiple years
+        >>> project.filter_by_attrs(year=[2019, 2020, 2021])
+
+        >>> # Filter by tags (checks if variable has ANY of these tags)
+        >>> project.filter_by_attrs(source="raw", tags=["town"])
+        >>> project.filter_by_attrs(tags=["town", "city"])  # Has either "town" OR "city"
+
+        >>> # Filter by name pattern (using callable)
+        >>> project.filter_by_attrs(name=lambda n: 'forest' in n.lower())
+
+        >>> # Filter active raster variables from 2020
+        >>> project.filter_by_attrs(year=2020, active=True, data_type='raster')
+
+        >>> # Filter by year range (using callable)
+        >>> project.filter_by_attrs(year=lambda y: y >= 2015 and y <= 2020)
+
+        >>> # Search in raw variables
+        >>> project.filter_by_attrs(source='raw', year=2019)
+
+        >>> # Search in both raw and processed
+        >>> project.filter_by_attrs(source='both', active=True)
+
+        Notes
+        -----
+        - String and bytes values are compared for exact equality.
+        - Iterable values (lists, tuples, sets) are treated as "value in list" checks.
+        - Tags are special: tags=["tag1", "tag2"] checks if variable has ANY of these tags.
+        - Callable values are invoked with the attribute value and must return True.
+        - All filters must match for a variable to be included (AND logic).
+        """
+        # Special handling for tags attribute
+        if "tags" in attrs:
+            tags_filter = attrs.pop("tags")
+
+            # Normalize tags to a list
+            if isinstance(tags_filter, str):
+                tags_filter = [tags_filter]
+
+            # Use filter_by_tags for tag filtering, then apply other filters
+            if tags_filter and isinstance(tags_filter, (list, tuple)):
+                # Get variables matching the tags
+                result = self.filter_by_tags(tags_filter, look_up_in=source)
+
+                # If there are additional filters, apply them
+                if attrs:
+                    filtered_result = {}
+                    for var_name, var in result.items():
+                        # Check if variable matches all other filters
+                        matches = True
+                        for attr, expected in attrs.items():
+                            if not hasattr(var, attr):
+                                matches = False
+                                break
+
+                            value = getattr(var, attr)
+
+                            if callable(expected):
+                                if not expected(value):
+                                    matches = False
+                                    break
+                            elif isinstance(expected, Iterable) and not isinstance(
+                                expected, (str, bytes, bytearray)
+                            ):
+                                if value not in expected:
+                                    matches = False
+                                    break
+                            else:
+                                if value != expected:
+                                    matches = False
+                                    break
+
+                        if matches:
+                            filtered_result[var_name] = var
+
+                    return filtered_result
+                else:
+                    return result
+
+        # No tag filtering, use standard list_variables
+        return self.list_variables(source=source, **attrs)
+
+    def reset(
+        self,
+        source: str = "processed",
+        auto_save: bool = True,
+        confirm: bool = True,
+    ) -> int:
+        """
+        Remove all variables from the specified collection.
+
+        This clears out all variables from either the raw or processed collection,
+        useful for cleaning up or starting fresh without deleting the entire project.
+
+        Parameters
+        ----------
+        source : str, optional
+            Which collection to reset: 'processed' (default), 'raw', or 'both'.
+        auto_save : bool, optional
+            If True (default), automatically saves the project after reset.
+        confirm : bool, optional
+            If True (default), shows a warning message before clearing.
+            Set to False to skip confirmation (useful in scripts).
+
+        Returns
+        -------
+        int
+            Number of variables removed.
+
+        Raises
+        ------
+        ValueError
+            If source is not 'processed', 'raw', or 'both'.
+
+        Examples
+        --------
+        >>> # Reset processed variables (default)
+        >>> project.reset()
+
+        >>> # Reset raw variables
+        >>> project.reset(source='raw')
+
+        >>> # Reset both collections
+        >>> project.reset(source='both')
+
+        >>> # Reset without confirmation (in automated scripts)
+        >>> project.reset(confirm=False, auto_save=False)
+
+        Notes
+        -----
+        This does NOT delete the actual files on disk, only removes the
+        variable references from the project. Use with caution as this
+        operation cannot be undone unless you reload the project from disk.
+        """
+        if source not in ["processed", "raw", "both"]:
+            raise ValueError("source must be 'processed', 'raw', or 'both'")
+
+        removed_count = 0
+
+        if source == "processed" or source == "both":
+            count = len(self.processed_variables)
+            if confirm and count > 0:
+                print(
+                    f"⚠️  WARNING: About to remove {count} processed variable(s) from project"
+                )
+
+            self.processed_variables.clear()
+            removed_count += count
+
+            if count > 0:
+                print(f"✓ Removed {count} processed variable(s)")
+
+        if source == "raw" or source == "both":
+            count = len(self.raw_variables)
+            if confirm and count > 0:
+                print(
+                    f"⚠️  WARNING: About to remove {count} raw variable(s) from project"
+                )
+
+            self.raw_variables.clear()
+            removed_count += count
+
+            if count > 0:
+                print(f"✓ Removed {count} raw variable(s)")
+
+        if removed_count == 0:
+            print(f"ℹ️  No variables to remove from '{source}' collection")
+        else:
+            print(f"\n✅ Total removed: {removed_count} variable(s)")
+
+        if auto_save and removed_count > 0:
+            self.save()
+
+        return removed_count
+
     def create_model_folder(self, model: str, test_name: Optional[str] = None) -> Path:
 
         # Create the folder path
@@ -620,6 +989,7 @@ class Project(BaseModel):
 
         folders = {
             "data_raw_folder": project_folder / "data_raw",
+            "glm_model_folder": project_folder / "glm_model",
             "processed_data_folder": project_folder / "data",
             "sampling_folder": project_folder / "far_samples",
             "rmj_mw": project_folder / "rmj_mw",
