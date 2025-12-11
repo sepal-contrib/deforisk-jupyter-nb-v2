@@ -5,6 +5,7 @@ from pydantic import Field
 import rioxarray
 import odc.geo.xr  # do not delete this
 
+from component.script.geo_utils import xr_reproject
 from component.script.processing import (
     display_raster,
     distance_to_edge_gdal_no_mask,
@@ -27,11 +28,39 @@ class LocalRasterVar(Variable):
     data_type: DataType = Field(default=DataType.raster, frozen=True)
     raster_type: RasterType
     post_processing: List[PostProcessing] = []
+    processing_history: List[str] = Field(
+        default_factory=list
+    )  # Track processing steps
     default_crs: Optional[str] = None
     default_resolution: Optional[float] = None
 
-    def show(self):
-        display_raster(self.name, self.path)
+    def show(self, ax=None, return_fig=False, max_size=1024):
+        """
+        Display the raster with appropriate visualization based on its type.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Axes to plot on. If None, creates new figure and shows it.
+        return_fig : bool, optional
+            If True, returns (fig, ax) tuple. Otherwise displays and returns None.
+        max_size : int, optional
+            Maximum dimension for display (default: 1024). Larger rasters will be
+            downsampled for faster visualization.
+
+        Returns
+        -------
+        tuple or None
+            If return_fig=True, returns (fig, ax). Otherwise returns None.
+        """
+        return display_raster(
+            self.name,
+            self.path,
+            self.raster_type,
+            ax=ax,
+            return_fig=return_fig,
+            max_size=max_size,
+        )
 
     def add_as_raw(self, auto_save: bool = True) -> "LocalRasterVar":
         """
@@ -67,8 +96,10 @@ class LocalRasterVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.raw_variables[self.name] = self
-        print(f"✓ Added '{self.name}' to raw variables")
+        # Use name + year for storage key
+        storage_key = f"{self.name}_{self.year}" if self.year else self.name
+        self.project.raw_variables[storage_key] = self
+        print(f"✓ Added '{self.name}' to raw variables (key: {storage_key})")
 
         if auto_save:
             self.project.save()
@@ -108,8 +139,10 @@ class LocalRasterVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.processed_vars[self.name] = self
-        print(f"✓ Added '{self.name}' to processed variables")
+        # Use name + year for storage key
+        storage_key = f"{self.name}_{self.year}" if self.year else self.name
+        self.project.processed_vars[storage_key] = self
+        print(f"✓ Added '{self.name}' to processed variables (key: {storage_key})")
 
         if auto_save:
             self.project.save()
@@ -177,7 +210,13 @@ class LocalRasterVar(Variable):
 
         # Determine output path using project folders
         output_folder = self.project.folders.processed_data_folder
-        output_path = output_folder / f"{self.name}_reprojected.tif"
+        # Build filename suffix from processing history + current step
+        # Handle legacy variables without processing_history
+        history = getattr(self, "processing_history", [])
+        filename_suffix = (
+            "_".join([*history, "reprojected"]) if history else "reprojected"
+        )
+        output_path = output_folder / f"{self.name}_{filename_suffix}.tif"
 
         # Determine resolution
         _resolution = resolution or self.default_resolution or 30
@@ -201,17 +240,117 @@ class LocalRasterVar(Variable):
             **kwargs,
         )
 
+        # Update processing history
+        history = getattr(self, "processing_history", [])
+        new_history = [*history, "reprojected"]
+
         # Create and return new LocalRasterVar using model_construct to bypass validation
         return LocalRasterVar.model_construct(
-            name=f"{self.name}_reprojected",
+            name=self.name,  # Keep original name
             raster_type=self.raster_type,
             path=output_path,
             default_crs=target_epsg,
             default_resolution=_resolution,
             post_processing=self.post_processing,
+            processing_history=new_history,
             project=self.project,
             data_type=DataType.raster,
             active=True,
+            year=self.year,
+            tags=self.tags.copy() if self.tags else [],
+        )
+
+    def reproject_and_match(
+        self,
+        geobox,
+        resampling: Optional[str] = None,
+        output_suffix: str = "reprojected_matched",
+        **kwargs,
+    ) -> "LocalRasterVar":
+        """
+        Reproject this raster using xarray and odc-geo to match a target geobox.
+        Returns a new LocalRasterVar with the reprojected data.
+
+        Parameters
+        ----------
+        geobox : odc.geo.geobox.GeoBox
+            The spatial template defining the shape, coordinates, dimensions,
+            and transform of the output raster.
+        resampling : str, optional
+            Resampling method. If None, automatically selects based on raster_type:
+            - categorical: 'nearest'
+            - continuous: 'bilinear'
+            Valid options: 'nearest', 'bilinear', 'cubic', 'cubic_spline',
+            'lanczos', 'average', 'mode', 'max', 'min', 'med', 'q1', 'q3'
+        output_suffix : str, optional
+            Suffix to add to the output filename. Default is 'reprojected_matched'.
+        **kwargs
+            Additional keyword arguments (currently unused, for future expansion).
+
+        Returns
+        -------
+        LocalRasterVar
+            A new LocalRasterVar instance with the reprojected data.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the input raster file doesn't exist.
+        ValueError
+            If the geobox is invalid or reprojection fails.
+        """
+        if not self.path.exists():
+            raise FileNotFoundError(f"Raster file not found: {self.path}")
+
+        # Determine output path using project folders
+        output_folder = self.project.folders.processed_data_folder
+        # Build filename suffix from processing history + current step
+        # Handle legacy variables without processing_history
+        history = getattr(self, "processing_history", [])
+        filename_suffix = (
+            "_".join([*history, output_suffix]) if history else output_suffix
+        )
+        output_path = output_folder / f"{self.name}_{filename_suffix}.tif"
+
+        # Auto-select resampling method based on raster_type if not specified
+        if resampling is None:
+            if self.raster_type == RasterType.categorical:
+                resampling = "nearest"
+            elif self.raster_type == RasterType.continuous:
+                resampling = "bilinear"
+            else:
+                resampling = "nearest"  # default fallback
+
+        # Perform xarray-based reprojection
+        xr_reproject(
+            raster_path=str(self.path),
+            geobox=geobox,
+            resampling_method=resampling,
+            output_path=str(output_path),
+        )
+
+        # Extract CRS and resolution from geobox
+        target_crs = f"EPSG:{geobox.crs.to_epsg()}"
+        target_resolution = abs(geobox.resolution.x)  # Use x resolution
+
+        # Update processing history
+        history = getattr(self, "processing_history", [])
+        new_history = [*history, output_suffix]
+
+        # Create and return new LocalRasterVar (name unchanged)
+        return LocalRasterVar.model_construct(
+            name=self.name,  # Keep original name
+            raster_type=self.raster_type,
+            path=output_path,
+            default_crs=target_crs,
+            default_resolution=target_resolution,
+            post_processing=self.post_processing,
+            processing_history=new_history,
+            project=self.project,
+            data_type=DataType.raster,
+            active=self.active,
+            year=self.year,
+            tags=self.tags.copy() if self.tags else [],
         )
 
     def apply_post_processing(self, post_process: PostProcessing) -> "LocalRasterVar":
@@ -287,10 +426,17 @@ class LocalRasterVar(Variable):
         LocalRasterVar
             A new LocalRasterVar instance.
         """
+        # Create a new variable name by appending the suffix
+        new_var_name = f"{self.name}_{suffix}"
+
         # Determine output path
         output_folder = self.project.folders.processed_data_folder
         output_folder.mkdir(parents=True, exist_ok=True)
-        output_path = output_folder / f"{self.name}_{suffix}.tif"
+        # Build filename suffix from processing history + current step
+        # Handle legacy variables without processing_history
+        history = getattr(self, "processing_history", [])
+        filename_suffix = "_".join([*history, suffix]) if history else suffix
+        output_path = output_folder / f"{self.name}_{filename_suffix}.tif"
 
         # Perform the actual post-processing
         if suffix == "edge":
@@ -335,17 +481,24 @@ class LocalRasterVar(Variable):
                 verbose=False,
             )
 
-        # Create and return the new LocalRasterVar
+        # Update processing history
+        history = getattr(self, "processing_history", [])
+        new_history = [*history, suffix]
+
+        # Create and return the new LocalRasterVar with a new name
         post_var = LocalRasterVar.model_construct(
-            name=f"{self.name}_{suffix}",
+            name=new_var_name,  # NEW variable name with suffix
             raster_type=raster_type,
             path=output_path,
             project=self.project,
             default_crs=self.default_crs,
             default_resolution=self.default_resolution,
+            processing_history=new_history,
             data_type=DataType.raster,
             active=True,
             post_processing=self.post_processing + [PostProcessing(suffix)],
+            year=self.year,
+            tags=self.tags.copy() if self.tags else [],
         )
 
         return post_var
