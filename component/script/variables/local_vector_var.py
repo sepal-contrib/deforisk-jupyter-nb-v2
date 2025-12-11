@@ -52,8 +52,10 @@ class LocalVectorVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.raw_variables[self.name] = self
-        print(f"✓ Added '{self.name}' to raw variables")
+        # Use name + year for storage key
+        storage_key = f"{self.name}_{self.year}" if self.year else self.name
+        self.project.raw_variables[storage_key] = self
+        print(f"✓ Added '{self.name}' to raw variables (key: {storage_key})")
 
         if auto_save:
             self.project.save()
@@ -88,8 +90,10 @@ class LocalVectorVar(Variable):
                 "Please set the 'project' parameter when creating the variable."
             )
 
-        self.project.processed_vars[self.name] = self
-        print(f"✓ Added '{self.name}' to processed variables")
+        # Use name + year for storage key
+        storage_key = f"{self.name}_{self.year}" if self.year else self.name
+        self.project.processed_vars[storage_key] = self
+        print(f"✓ Added '{self.name}' to processed variables (key: {storage_key})")
 
         if auto_save:
             self.project.save()
@@ -124,8 +128,11 @@ class LocalVectorVar(Variable):
         LocalRasterVar
             A new LocalRasterVar instance.
         """
-        if not isinstance(base, LocalRasterVar):
-            raise ValueError("base must be a LocalRasterVar instance")
+        # Check if base is a raster using data_type instead of isinstance to handle module reloads
+        if not hasattr(base, "data_type") or base.data_type != DataType.raster:
+            raise ValueError(
+                "base must be a LocalRasterVar instance (raster data type)"
+            )
 
         # Use provided rasterization_method or fall back to self's value
         _rasterization_method = rasterization_method or self.rasterization_method
@@ -163,13 +170,18 @@ class LocalVectorVar(Variable):
         )
 
         return LocalRasterVar.model_construct(
-            name=f"{self.name}",
+            name=self.name,
             raster_type=raster_type,
             path=output_path,
             default_crs=self.default_crs,
             project=self.project,
             data_type=DataType.raster,
             active=True,
+            year=self.year,
+            processing_history=[
+                "rasterized"
+            ],  # Track that this came from vector rasterization
+            tags=self.tags.copy() if self.tags else [],
         )
 
     def to_gee_var(self) -> ee.FeatureCollection:
