@@ -142,12 +142,30 @@ def xr_rasterize(
     else:
         raise ValueError("Mode must be either 'binary' or 'unique'")
 
+    # Determine appropriate dtype
+    if mode == "unique":
+        # For unique IDs, check if there are too many features
+        num_features = len(values) if values else 0
+        if num_features > 255:
+            raise ValueError(
+                f"Cannot rasterize with mode='unique': {num_features} features found, "
+                f"but unique mode only supports up to 255 unique values. "
+                f"Consider using mode='binary' instead to create a simple presence/absence raster."
+            )
+        dtype = "uint8"
+    else:
+        # Binary mode only needs uint8
+        dtype = "uint8"
+
+    # Allow user to override dtype via kwargs
+    dtype = rasterio_kwargs.pop("dtype", dtype)
+
     # Rasterize shapes into a numpy array
     im = rasterio.features.rasterize(
         shapes=shapes_and_values if mode == "unique" else shapes,
         out_shape=geobox.shape,
         transform=geobox.transform,
-        dtype="uint8",
+        dtype=dtype,
         **rasterio_kwargs,
     )
 
@@ -369,10 +387,10 @@ def get_forest_loss_calculated(
     Parameters
     ----------
     project : Project
-        The project containing configuration and years
+        The project containing configuration
     forest_layers : List[LocalRasterVar]
-        List of forest raster layers, one for each year in project.years
-        Should be in chronological order
+        List of exactly 3 forest raster layers, each with a year attribute.
+        Years are automatically extracted from the layers.
 
     Returns
     -------
@@ -383,18 +401,13 @@ def get_forest_loss_calculated(
     from component.script.variables import LocalRasterVar
     from pathlib import Path
 
-    years = list(project.years)
-
-    # Validate input
-    if len(forest_layers) != len(years):
+    # Validate input - must have exactly 3 layers
+    if len(forest_layers) != 3:
         raise ValueError(
-            f"Number of forest layers ({len(forest_layers)}) must match "
-            f"number of years ({len(years)})"
+            f"Exactly 3 forest layers are required, got {len(forest_layers)}"
         )
 
-    if len(years) != 3:
-        raise ValueError(f"Exactly 3 years are required, got {len(years)}")
-
+    # Build layer_by_year mapping and validate
     layer_by_year = {}
     for layer in forest_layers:
         if layer.year is None:
@@ -405,10 +418,8 @@ def get_forest_loss_calculated(
             raise ValueError(f"Duplicate forest layer detected for year {layer.year}")
         layer_by_year[layer.year] = layer
 
-    if sorted(layer_by_year) != sorted(years):
-        raise ValueError(
-            f"Forest layer years {sorted(layer_by_year)} do not match project years {years}"
-        )
+    # Get years from the layers themselves (sorted)
+    years = sorted(layer_by_year.keys())
 
     ordered_layers = []
     for year in years:
@@ -430,9 +441,8 @@ def get_forest_loss_calculated(
     for start_layer, end_layer in pairings:
         start_year = start_layer.year
         end_year = end_layer.year
-        output_path = (
-            project.folders.data_raw_folder / f"forest_loss_{start_year}_{end_year}.tif"
-        )
+        var_name = f"forest_loss_{start_year}_{end_year}"
+        output_path = project.folders.data_raw_folder / f"{var_name}.tif"
 
         print(f"Calculating forest loss between {start_year} and {end_year}...")
         process_forest_loss_xarray(
@@ -441,41 +451,159 @@ def get_forest_loss_calculated(
             str(output_path),
         )
 
-        forest_loss_vars.append(
-            LocalRasterVar(
-                name=f"forest_loss_{start_year}_{end_year}",
-                path=Path(output_path),
-                raster_type=RasterType.categorical,
-                project=project,
-                tags=["forest_loss"],
-                year=end_year,
-                default_crs=end_layer.default_crs or start_layer.default_crs,
-                default_resolution=end_layer.default_resolution
-                or start_layer.default_resolution,
-            )
+        new_var = LocalRasterVar(
+            name=var_name,
+            path=Path(output_path),
+            raster_type=RasterType.categorical,
+            project=project,
+            tags=["deforestation", "forest_loss", f"{start_year}_{end_year}"],
+            default_crs=end_layer.default_crs or start_layer.default_crs,
+            default_resolution=end_layer.default_resolution
+            or start_layer.default_resolution,
         )
+
+        forest_loss_vars.append(new_var)
 
     print("✓ Forest loss calculation complete!")
 
     return forest_loss_vars
 
 
-def display_raster(name, path):
+def display_raster(
+    name, path, raster_type=None, ax=None, return_fig=False, max_size=1024
+):
+    """
+    Display a raster with appropriate visualization based on its type.
+
+    Uses intelligent downsampling for fast visualization of large rasters.
+
+    Parameters
+    ----------
+    name : str
+        Name of the raster to display in the title
+    path : str or Path
+        Path to the raster file
+    raster_type : RasterType or str, optional
+        Type of raster ('categorical' or 'continuous'). If None, treats as continuous.
+    ax : matplotlib.axes.Axes, optional
+        Axes to plot on. If None, creates new figure and axes.
+    return_fig : bool, optional
+        If True, returns (fig, ax) tuple instead of showing the plot.
+    max_size : int, optional
+        Maximum dimension for display (default: 1024). Rasters larger than this
+        will be downsampled for faster visualization.
+
+    Returns
+    -------
+    tuple or None
+        If return_fig=True, returns (fig, ax) tuple. Otherwise returns None.
+    """
     import matplotlib.pyplot as plt
     import rasterio
+    from rasterio.enums import Resampling
+    import numpy as np
 
     # Open the raster file using rasterio
     with rasterio.open(path) as src:
-        # Read the first band of the raster data
-        raster_data = src.read(1)
+        # Calculate optimal downsampling factor for display
+        height, width = src.height, src.width
+        max_dim = max(height, width)
 
-        # Create a plot for the raster data
-        plt.figure(figsize=(8, 8))
-        plt.imshow(raster_data, cmap="viridis")  # You can choose a different colormap
-        plt.colorbar()  # Optional, to add a color bar to the plot
+        if max_dim > max_size:
+            # Calculate the output shape for downsampling
+            scale_factor = max_size / max_dim
+            out_height = int(height * scale_factor)
+            out_width = int(width * scale_factor)
 
-        # Add the name of the dataset as a title
-        plt.title(f"Raster Layer: {name}")
+            # Choose resampling method based on raster type
+            is_categorical = False
+            if raster_type is not None:
+                raster_type_str = str(raster_type).lower()
+                is_categorical = "categorical" in raster_type_str
+
+            # Use nearest neighbor for categorical, average for continuous
+            resampling_method = (
+                Resampling.nearest if is_categorical else Resampling.average
+            )
+
+            # Read with downsampling - much faster!
+            raster_data = src.read(
+                1, out_shape=(out_height, out_width), resampling=resampling_method
+            )
+        else:
+            # Small enough, read full resolution
+            raster_data = src.read(1)
+
+        nodata = src.nodata
+
+        # Mask nodata values
+        if nodata is not None:
+            raster_data = np.ma.masked_equal(raster_data, nodata)
+
+        # Create a plot for the raster data (or use provided axes)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(6, 5))
+            created_fig = True
+        else:
+            fig = ax.get_figure()
+            created_fig = False
+
+        # Determine if raster is categorical or continuous
+        is_categorical = False
+        if raster_type is not None:
+            # Handle both RasterType enum and string
+            raster_type_str = str(raster_type).lower()
+            is_categorical = "categorical" in raster_type_str
+
+        if is_categorical:
+            # Categorical raster: use discrete colormap
+            # Get unique values (excluding masked/nodata)
+            unique_vals = (
+                np.unique(raster_data.compressed())
+                if np.ma.is_masked(raster_data)
+                else np.unique(raster_data)
+            )
+            n_categories = len(unique_vals)
+
+            # Use appropriate categorical colormap
+            if n_categories <= 10:
+                cmap = plt.cm.get_cmap("tab10", n_categories)
+            elif n_categories <= 20:
+                cmap = plt.cm.get_cmap("tab20", n_categories)
+            else:
+                cmap = plt.cm.get_cmap("nipy_spectral", n_categories)
+
+            im = ax.imshow(raster_data, cmap=cmap, interpolation="nearest")
+            ax.set_title(
+                f"{name}\n(Categorical - {n_categories} classes)", fontsize=10, pad=5
+            )
+        else:
+            # Continuous raster: use continuous colormap
+            im = ax.imshow(raster_data, cmap="viridis")
+
+            # Add statistics to title
+            if np.ma.is_masked(raster_data):
+                vmin, vmax = raster_data.min(), raster_data.max()
+                ax.set_title(
+                    f"{name}\n(Continuous: [{vmin:.2f}, {vmax:.2f}])",
+                    fontsize=10,
+                    pad=5,
+                )
+            else:
+                ax.set_title(f"{name}\n(Continuous)", fontsize=10, pad=5)
+
+        # Turn off axes for cleaner look in grid layouts
+        ax.axis("off")
+
+        # Only apply tight_layout and show if we created the figure
+        if created_fig and not return_fig:
+            plt.tight_layout()
+            plt.show()
+
+        if return_fig:
+            return fig, ax
+
+        return None
 
         # Show the plot
         plt.show()
