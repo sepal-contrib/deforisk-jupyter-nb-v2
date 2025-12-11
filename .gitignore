@@ -9,6 +9,13 @@ wheels/
 # Virtual environments
 .venv
 
+# Documentation builds
+docs/_build/
+docs/build/
+legacy/
+*.md
+.ipynb_checkpoints/
+
 #Download Folder
 data/
 test/
