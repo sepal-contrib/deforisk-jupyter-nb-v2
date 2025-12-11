@@ -18,7 +18,7 @@ class Variable(BaseModel):
         },
     )
 
-    name: str
+    name: str  # Clean variable identifier: "towns", "forest_gfc", "altitude"
     data_type: DataType
     year: Optional[int] = None  # Optional year for temporal variables
     active: bool = True  # Variables are active by default
@@ -119,8 +119,11 @@ class Variable(BaseModel):
 try:
     from component.script.project import Project
 
-    # Rebuild Variable classes first
-    Variable.model_rebuild()
+    # Build type namespace with Project for all variable classes
+    types_namespace = {"Project": Project}
+
+    # Rebuild Variable base class first
+    Variable.model_rebuild(_types_namespace=types_namespace)
 
     # Then rebuild Project to ensure it sees the updated Variable classes
     Project.model_rebuild()
