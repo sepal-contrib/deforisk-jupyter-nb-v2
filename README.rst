@@ -1,3 +1,13 @@
+Deforisk Jupyter Notebooks
+==========================
+
+A comprehensive toolkit for deforestation/degradation risk modeling and spatial analysis. This project provides Jupyter notebooks and Python scripts for processing geospatial data, building predictive models, and analyzing forest degradation patterns using machine learning and statistical methods.
+
+📚 **Documentation**: https://deforisk-notebooks.readthedocs.io/en/latest/
+
+Installation
+------------
+
 In sepal terminal:
 
 
