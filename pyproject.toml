@@ -2,8 +2,9 @@
 name = "deforisk-jupyter-nb"
 version = "0.1.0"
 description = "Add your description here"
-readme = "README.md"
-requires-python = "==3.11.10"
+readme = "README.rst"
+requires-python = ">=3.11"
+license = {text = "MIT"}
 dependencies = [
     "cudf-cu12>=25.8.0",
     "cuml-cu12>=25.8.0",
@@ -31,8 +32,10 @@ dependencies = [
     "xarray-spatial>=0.4.0",
 ]
 
-[project.license]
-text = "MIT"
+[tool.setuptools.packages.find]
+where = ["."]  
+include = ["component*"]  
+exclude = ["notebooks*", "notebooks_dask*", "data*", "docs*", "legacy*"]
 
 [[tool.uv.index]]
 name = "gdal-wheels"
