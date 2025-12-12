@@ -1,5 +1,3 @@
-# Requirements for building documentation
-
 sphinx>=7.0.0
 pydata-sphinx-theme>=0.15.0
 sphinx-copybutton>=0.5.0
@@ -7,14 +5,3 @@ myst-parser>=2.0.0
 nbsphinx>=0.9.3
 pandoc>=2.3
 ipykernel>=6.25.0
-
-# Project dependencies (minimal for doc building)
-# Commented out to avoid import errors during build
-# earthengine-api
-# rasterio
-# geopandas
-# xarray
-# rioxarray
-# numpy
-# pandas
-# dask
